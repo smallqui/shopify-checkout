@@ -3,7 +3,7 @@
 
 **Important Note:** This code is not intended for use as-is and should only be viewed as a proof of concept (missing dependencies).
 ## Features
-  - Product out-of-stock bypass via the Storefront API
+  - Product out-of-stock bypass via the Storefront API (see modules/shopify/requests/wallets.js)
   - Product monitoring and variant selection (with cache bypass)
   - Proof of concept implementation of checkout flow (for non-gql stores)
   - Paypal checkout support (for non-gql stores)
