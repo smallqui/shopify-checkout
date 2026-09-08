@@ -1,5 +1,24 @@
 const got = require("got");
 
+/**
+ * Approves an onboarded PayPal guest payment session through PayPal's
+ * GraphQL checkout API.
+ *
+ * Sends the approval mutation using the PayPal Express checkout ID as the
+ * client context and the temporary access token returned during guest
+ * onboarding for authorization.
+ *
+ * The existing cookie jar and optional proxy agent are reused to preserve
+ * the PayPal checkout session established during the previous request.
+ *
+ * @param {Object} json - GraphQL payload containing the payment approval mutation.
+ * @param {string} paypalExpressId - PayPal Express token identifying the checkout session.
+ * @param {string} paypalAccessToken - Temporary PayPal guest-session access token.
+ * @param {Object} cookieJar - Cookie jar used to preserve session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the PayPal approval JSON response.
+ */
 function paypalPostApprove(json, paypalExpressId, paypalAccessToken, cookieJar, agent){
     let url = "https://www.paypal.com/graphql?ApproveOnboardPaymentMutation";
 
@@ -35,6 +54,21 @@ function paypalPostApprove(json, paypalExpressId, paypalAccessToken, cookieJar, 
     return got.post(url, options);
 };
 
+/**
+ * Follows PayPal's merchant callback URL after payment approval.
+ *
+ * Returns control from PayPal to the Shopify storefront using the callback
+ * URL supplied by the approved PayPal checkout session. The request preserves
+ * the existing cookies and proxy session so the calling checkout workflow can
+ * inspect the resulting redirect or processing state.
+ *
+ * @param {string} paypalCallbackUrl - Merchant callback URL returned by PayPal.
+ * @param {string} domain - Shopify storefront domain receiving the callback.
+ * @param {Object} cookieJar - Cookie jar used to preserve session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the merchant callback response.
+ */
 function paypalGetCallback(paypalCallbackUrl, domain, cookieJar, agent){
     let options = {
         headers: {
@@ -60,6 +94,25 @@ function paypalGetCallback(paypalCallbackUrl, domain, cookieJar, agent){
     return got(paypalCallbackUrl, options)
 };
 
+/**
+ * Creates and onboards a PayPal guest checkout session through PayPal's
+ * GraphQL checkout API.
+ *
+ * Sends the guest onboarding mutation using the PayPal Express checkout ID
+ * as the client context. The response is used by the checkout workflow to
+ * retrieve the temporary buyer access token, funding information, and payment
+ * contingencies required for the subsequent approval request.
+ *
+ * The existing cookie jar and optional proxy agent are reused so the PayPal
+ * session remains consistent throughout the payment flow.
+ *
+ * @param {Object} json - GraphQL payload containing guest, billing, shipping, and payment data.
+ * @param {string} paypalExpressId - PayPal Express token identifying the checkout session.
+ * @param {Object} cookieJar - Cookie jar used to preserve session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the PayPal onboarding JSON response.
+ */
 function paypalPostCreate(json, paypalExpressId, cookieJar, agent){
     let url = "https://www.paypal.com/graphql?OnboardGuestMutation";
 

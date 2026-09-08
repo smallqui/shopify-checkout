@@ -1,5 +1,23 @@
 const got = require("got");
 
+/**
+ * Polls Shopify's checkout queue through its GraphQL queue endpoint.
+ *
+ * Sends the provided GraphQL payload to `/queue/poll` while preserving the
+ * task's existing cookie and proxy session. The response contains queue state
+ * such as updated queue tokens, polling intervals, estimated wait time, and
+ * product availability information used by the checkout controller.
+ *
+ * Redirects are disabled so queue-related responses can be handled directly
+ * by the calling workflow.
+ *
+ * @param {string} domain - Shopify storefront domain.
+ * @param {Object} json - GraphQL request payload containing the queue polling query and variables.
+ * @param {Object} cookieJar - Cookie jar used to preserve storefront session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the queue polling JSON response.
+ */
 function graphqlPostQueue(domain, json, cookieJar, agent){
     let url = `https://${domain}/queue/poll`;
 

@@ -1,18 +1,37 @@
 const got = require("got");
 const { v4 } = require("uuid");
 
-/*
-original shopify api documentation 
-https://web.archive.org/web/20210321234951/https://shopify.dev/tutorials/sell-through-the-checkout-api
-current version of the documentation doesn't include most of the stuff probably to stop people from making bots
-*/
-
-/* 
-https://${domain}/wallets/checkouts/${checkoutToken}/calculate_shipping.json
-found this endpoint on one the checkout scripts that load https://cdn.shopify.com/shopifycloud/shopify/assets/checkout_2021-01-25-b77c3c034d15dc2519055ceecc51dbbe4fd4196767e28a4702351899f8bd8922.js
-it allows you to bypass the out of stock message on the storefront api (https://${domain}/wallets/checkouts/${checkoutToken}.json endpoint)
-some sites will also include the shipping rate and cost with the response (example: https://shop-us.doverstreetmarket.com/) shaving off a few seconds from checkout.
-*/
+/**
+ * Calculates shipping information for an existing Shopify wallet checkout.
+ *
+ * Sends checkout data to Shopify's wallet-specific `calculate_shipping`
+ * endpoint while preserving the active checkout authorization, cookie jar,
+ * and optional proxy session.
+ *
+ * NOTE: Original implementation reference — this request flow was based in
+ * part on Shopify's earlier Checkout API documentation:
+ * https://web.archive.org/web/20210321234951/https://shopify.dev/tutorials/sell-through-the-checkout-api
+ *
+ * NOTE: Original implementation discovery — the
+ * `/wallets/checkouts/${checkoutToken}/calculate_shipping.json` endpoint was
+ * identified in Shopify's checkout frontend JavaScript:
+ * https://cdn.shopify.com/shopifycloud/shopify/assets/checkout_2021-01-25-b77c3c034d15dc2519055ceecc51dbbe4fd4196767e28a4702351899f8bd8922.js
+ *
+ * The endpoint was used as an alternate checkout path when the standard wallet
+ * checkout endpoint returned an out-of-stock response. Some storefronts were
+ * also observed returning shipping-rate and cost data directly from this
+ * request, reducing the number of additional checkout requests required.
+ *
+ * @param {string} domain - Shopify storefront domain.
+ * @param {string} checkoutToken - Token identifying the active checkout.
+ * @param {Object} json - Checkout payload used to calculate shipping information.
+ * @param {string} accessToken - Storefront API access token.
+ * @param {string} secretKey - Authorization token associated with the checkout.
+ * @param {Object} cookieJar - Cookie jar used to preserve storefront session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the shipping calculation response.
+ */
 function walletsPostCalculate(domain, checkoutToken, json, accessToken, secretKey, cookieJar, agent){
     let url = `https://${domain}/wallets/checkouts/${checkoutToken}/calculate_shipping.json`;
 
@@ -39,6 +58,22 @@ function walletsPostCalculate(domain, checkoutToken, json, accessToken, secretKe
     return got.post(url, options);
 };
 
+/**
+ * Retrieves the current state of an existing Shopify wallet checkout.
+ *
+ * Uses the wallet-specific checkout endpoint to inspect the active checkout
+ * while authenticating with the Storefront API access token and checkout
+ * authorization token.
+ *
+ * @param {string} domain - Shopify storefront domain.
+ * @param {string} checkoutToken - Token identifying the active checkout.
+ * @param {string} accessToken - Storefront API access token.
+ * @param {string} secretKey - Authorization token associated with the checkout.
+ * @param {Object} cookieJar - Cookie jar used to preserve storefront session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the current wallet checkout response.
+ */
 function walletsGetCheckout(domain, checkoutToken, accessToken, secretKey, cookieJar, agent){
     let url = `https://${domain}/wallets/checkouts/${checkoutToken}.json`;
 
@@ -64,6 +99,23 @@ function walletsGetCheckout(domain, checkoutToken, accessToken, secretKey, cooki
     return got(url, options);
 };
 
+/**
+ * Updates an existing Shopify wallet checkout.
+ *
+ * Sends a partial checkout payload to the wallet-specific checkout endpoint.
+ * The request can be used to update checkout state while retaining the same
+ * checkout authorization, cookie jar, and optional proxy session.
+ *
+ * @param {string} domain - Shopify storefront domain.
+ * @param {string} checkoutToken - Token identifying the active checkout.
+ * @param {Object} json - Partial checkout payload containing the values to update.
+ * @param {string} accessToken - Storefront API access token.
+ * @param {string} secretKey - Authorization token associated with the checkout.
+ * @param {Object} cookieJar - Cookie jar used to preserve storefront session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the updated wallet checkout response.
+ */
 function walletsPatchCheckout(domain, checkoutToken, json, accessToken, secretKey, cookieJar, agent){
     let url = `https://${domain}/wallets/checkouts/${checkoutToken}.json`;
 
@@ -90,6 +142,21 @@ function walletsPatchCheckout(domain, checkoutToken, json, accessToken, secretKe
     return got.patch(url, options);
 };
 
+/**
+ * Creates a new checkout through Shopify's wallet-specific checkout endpoint.
+ *
+ * Sends the initial checkout payload and generates unique Shopify visit and
+ * checkout tokens for the request. The wallet caller header identifies the
+ * request as part of Shopify's wallet checkout flow.
+ *
+ * @param {string} domain - Shopify storefront domain.
+ * @param {Object} json - Checkout payload containing the initial checkout data.
+ * @param {string} accessToken - Storefront API access token.
+ * @param {Object} cookieJar - Cookie jar used to preserve storefront session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the newly created wallet checkout response.
+ */
 function walletsPostCheckout(domain, json, accessToken, cookieJar, agent){
     let url = `https://${domain}/wallets/checkouts.json`;
     
@@ -115,6 +182,21 @@ function walletsPostCheckout(domain, json, accessToken, cookieJar, agent){
     return got.post(url, options);
 };
 
+/**
+ * Retrieves payment records associated with an active Shopify wallet checkout.
+ *
+ * Used to inspect payment state and payment-related response data through the
+ * wallet-specific checkout API.
+ *
+ * @param {string} domain - Shopify storefront domain.
+ * @param {string} checkoutToken - Token identifying the active checkout.
+ * @param {string} accessToken - Storefront API access token.
+ * @param {string} secretKey - Authorization token associated with the checkout.
+ * @param {Object} cookieJar - Cookie jar used to preserve storefront session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the wallet checkout payment records.
+ */
 function walletsGetPayments(domain, checkoutToken, accessToken, secretKey, cookieJar, agent){
     let url = `https://${domain}/wallets/checkouts/${checkoutToken}/payments.json`;
 
@@ -141,6 +223,21 @@ function walletsGetPayments(domain, checkoutToken, accessToken, secretKey, cooki
 };
 
 
+/**
+ * Retrieves available shipping rates for an active Shopify wallet checkout.
+ *
+ * Requests the wallet-specific shipping-rate endpoint after the checkout has
+ * sufficient customer and shipping information to calculate delivery options.
+ *
+ * @param {string} domain - Shopify storefront domain.
+ * @param {string} checkoutToken - Token identifying the active checkout.
+ * @param {string} accessToken - Storefront API access token.
+ * @param {string} secretKey - Authorization token associated with the checkout.
+ * @param {Object} cookieJar - Cookie jar used to preserve storefront session state.
+ * @param {Object} agent - Optional HTTP/HTTPS proxy agent.
+ *
+ * @returns {Promise} GOT request promise containing the available wallet shipping rates.
+ */
 function walletsGetRates(domain, checkoutToken, accessToken, secretKey, cookieJar, agent){
     let url = `https://${domain}/wallets/checkouts/${checkoutToken}/shipping_rates.json`;
 

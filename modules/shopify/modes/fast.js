@@ -6,7 +6,98 @@ const { load } = require("cheerio");
 const { getSession } = require("../scripts");
 const Twocaptcha = require("../../captcha");
 
+/**
+ * Coordinates a complete storefront monitoring and checkout task.
+ *
+ * FastTask is implemented as a state-driven workflow: each asynchronous step
+ * resolves with the name of the next method to execute, while recoverable
+ * failures reject with status and retry metadata consumed by `controller()`.
+ *
+ * The task maintains a shared session (cookies + optional proxy agent) across
+ * product monitoring, checkout creation, shipping, payment, queue, captcha,
+ * and result-reporting requests.
+ *
+ * @class FastTask
+ */
 class FastTask {
+    /**
+     * Creates and immediately starts a checkout task.
+     *
+     * @param {Object} site - Store-specific configuration and API metadata.
+     * @param {Object} profile - Customer, shipping, and payment information.
+     * @param {Object} task - Runtime task configuration such as monitor input,
+     * sizes, quantity, delays, discount code, proxy/captcha settings, and ID.
+     *
+     * NOTE: Original implementation note — password-page handling was planned for this configuration stage.
+     *
+     * NOTE: Original implementation note — this PayPal flow was experimental, but returned real payment declines during testing.
+     *
+     * Instance variables:
+     * @property {string|number} id - Unique task identifier used for status reporting.
+     * @property {Object} profile - Customer profile containing contact, shipping, and payment data.
+     *
+     * Monitor configuration:
+     * @property {*} input - Raw product-monitoring input.
+     * @property {Array|string} sizes - Requested product size(s).
+     * @property {number} quantity - Quantity to add to checkout.
+     * @property {Object} delays - Monitor, retry, and restock delay configuration.
+     * @property {string} monitorType - Parsed monitoring strategy.
+     * @property {Array|boolean} keywords - Parsed keyword rules when keyword monitoring is active.
+     * @property {string|boolean} variant - Selected or supplied product variant ID.
+     * @property {string|boolean} handle - Product handle when link monitoring is active.
+     * @property {boolean} deepSearch - Enables deeper keyword product matching.
+     * @property {string} twoCaptchaKey - API key used by the checkout captcha solver.
+     *
+     * Site configuration:
+     * @property {string} site - Display name of the target storefront.
+     * @property {string} domain - Storefront domain used for requests.
+     * @property {string} shopId - Shopify shop identifier.
+     * @property {string} accessToken - Storefront API access token.
+     * @property {string} gateway - Active payment gateway identifier.
+     * @property {Object} properties - Optional custom line-item properties.
+     * @property {string} accountCaptchaSitekey - Account captcha site key.
+     * @property {string} checkpointCaptchaSitekey - Checkpoint captcha site key.
+     * @property {string} checkoutCaptchaSitekey - Checkout captcha site key.
+     *
+     * Dynamic values:
+     * @property {string} password - Optional storefront password.
+     * @property {string} discountCode - Optional checkout discount code.
+     *
+     * Request/session values:
+     * @property {string|boolean} proxy - Proxy assigned to the task.
+     * @property {Object|boolean} agent - HTTP agent configured for the proxy.
+     * @property {CookieJar} cookieJar - Shared cookie jar that preserves session state.
+     *
+     * Controller values:
+     * @property {string|undefined} previous - State to resume after an interruption such as queueing.
+     * @property {string|undefined} current - Current workflow state placeholder.
+     * @property {string|undefined} next - Next workflow method returned by the active state.
+     *
+     * Queue values:
+     * @property {string|undefined} queueToken - Token used to poll the checkout queue.
+     *
+     * Checkout values:
+     * @property {string|undefined} checkoutUrl - URL of the active checkout.
+     * @property {string|undefined} checkoutToken - Token identifying the active checkout.
+     * @property {string|undefined} secretKey - Checkout secret parsed from the API response.
+     * @property {string|undefined} shippingRate - Selected shipping-rate ID.
+     * @property {string|undefined} totalPrice - Final amount formatted for payment submission.
+     *
+     * Captcha values:
+     * @property {string|undefined} authenticityToken - Checkout form authenticity token.
+     * @property {string|undefined} checkoutCaptchaToken - Solved checkout captcha response token.
+     *
+     * PayPal values:
+     * @property {string|undefined} paypalExpressId - PayPal Express checkout token.
+     * @property {string|undefined} paypalInstrumentId - Selected PayPal funding instrument ID.
+     * @property {string|undefined} paypalAccessToken - Temporary PayPal guest-session access token.
+     * @property {string|undefined} paypalCallbackUrl - Merchant callback URL returned after approval.
+     *
+     * Timer values:
+     * @property {number|undefined} checkoutStart - Timestamp captured when checkout timing begins.
+     * @property {number|undefined} checkoutEnd - Timestamp captured immediately before payment submission.
+     * @property {number|undefined} checkoutSpeed - Reserved value for calculated checkout speed.
+     */
     constructor(site, profile, task){
         this.id = task.id;
         this.profile = profile;
@@ -75,6 +166,14 @@ class FastTask {
         this.start();
     };
 
+    /**
+     * Initializes the task and selects the first workflow state.
+     *
+     * Sites with known Storefront API configuration can begin checkout
+     * immediately; otherwise configuration is discovered first.
+     *
+     * @returns {void}
+     */
     start(){
         status(this.id, this.site, `Task Started - ${this.profile.id} - ${this.input}`, "cyan");
         
@@ -84,11 +183,24 @@ class FastTask {
             this.controller("createCheckout");
     };
 
+    /**
+     * Marks the current task as stopped in the shared status reporter.
+     *
+     * @returns {void}
+     */
     stop(){
         status(this.id, this.site, "Task Stopped", "red");
     };
 
     //custom site logic
+    /**
+     * Retrieves storefront payment configuration required to create checkout.
+     *
+     * Populates the shop ID and Storefront API access token when they were not
+     * supplied in the site configuration.
+     *
+     * @returns {Promise<string>} Resolves with the next controller state.
+     */
     getConfig(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Checking Site Config", "cyan");
@@ -100,7 +212,7 @@ class FastTask {
                 this.shopId = checkoutConfig.shopId;
                 this.accessToken = accessToken;
 
-                //add password logic
+    // NOTE: Original implementation note — add password logic.
                 resolve("createCheckout");
             })
             .catch(({ response }) => {
@@ -114,6 +226,15 @@ class FastTask {
     };
 
     //monitors
+    /**
+     * Polls the store's product feed for a keyword match and requested size.
+     *
+     * When a matching product is found, this method stores its handle and
+     * selected variant before advancing to add-to-cart. Missing products or
+     * sizes are treated as recoverable monitor retries.
+     *
+     * @returns {Promise<string>} Resolves with `addToCart` when a match is ready.
+     */
     monitorProducts(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Monitoring", "cyan");
@@ -149,6 +270,11 @@ class FastTask {
         });
     };
 
+    /**
+     * Polls a known product handle until a requested variant becomes available.
+     *
+     * @returns {Promise<string>} Resolves with `addToCart` when a size is found.
+     */
     monitorLink(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Monitoring", "cyan");
@@ -181,7 +307,16 @@ class FastTask {
     };
 
     //queue
-    //https://shopify.dev/docs/apps/channels/checkout-api/checkout-queue-polling
+    /**
+     * Polls Shopify's checkout queue and resumes the interrupted workflow step.
+     *
+     * The method preserves the queue token between polls and restores the
+     * previous controller state once the queue clears.
+     *
+     * @returns {Promise<string>} Resolves with the workflow step that was queued.
+     *
+     * NOTE: Original reference — Shopify Checkout API queue polling documentation.
+     */
     checkQueue(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Checking Queue", "yellow");
@@ -220,6 +355,15 @@ class FastTask {
     };
 
     //checkout flow
+    /**
+     * Creates the initial checkout session through the Storefront API.
+     *
+     * Stores the checkout URL, token, and parsed secret key for use by all
+     * subsequent checkout requests. Queue responses are redirected through
+     * `checkQueue()` and later resume this step.
+     *
+     * @returns {Promise<string>} Resolves with the next controller state.
+     */
     createCheckout(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Creating Checkout", "cyan");
@@ -250,10 +394,10 @@ class FastTask {
                     this.previous = "createCheckout";
                     resolve("checkQueue");
                 }
-                //i think this means the storefront api is disabled
+    // NOTE: Original observation — this response may indicate that the Storefront API is disabled.
                 else if(statusCode == 400)
                     reject({ message: "Failed Creating Checkout!" });
-                //402 also might give the same "Shop Unavailable" message im pretty sure depends on site (uncommon)
+    // NOTE: Original observation — HTTP 402 may also return a "Shop Unavailable" response depending on the site (uncommon).
                 else if(statusCode == 403)
                     reject({ message: "Shop Unavailable!" });
                 else
@@ -262,6 +406,14 @@ class FastTask {
         });
     };
 
+    /**
+     * Applies customer contact, billing, and shipping information to checkout.
+     *
+     * After the profile is accepted, control branches into variant checkout or
+     * one of the product-monitoring strategies based on the task input type.
+     *
+     * @returns {Promise<string>} Resolves with the next monitor/cart state.
+     */
     submitInfo(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Submitting Info", "cyan");
@@ -317,6 +469,15 @@ class FastTask {
         });
     };
 
+    /**
+     * Adds the selected product variant and quantity to the checkout.
+     *
+     * This is also the point where checkout-speed timing begins. The response
+     * determines whether the workflow should apply a discount, fetch shipping
+     * rates, submit an existing rate, or continue directly to tax calculation.
+     *
+     * @returns {Promise<string>} Resolves with the next checkout state.
+     */
     addToCart(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Adding To Cart", "cyan");
@@ -360,7 +521,7 @@ class FastTask {
 
                 let { statusCode, headers } = response;
 
-                //todo - create a script to get atc properties for custom sites
+    // TODO (original): Create a script to retrieve add-to-cart properties for custom sites.
                 if(statusCode == 422)
                     reject({ message: "Waiting For Release!", color: "cyan", delay: this.delays.monitor });
                 else if(statusCode == 429 && headers["x-checkout-queue"]){
@@ -374,6 +535,11 @@ class FastTask {
         });
     };
 
+    /**
+     * Applies the configured discount code to the active checkout.
+     *
+     * @returns {Promise<string>} Resolves with `getRate` after application.
+     */
     submitDiscount(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Submitting Discount Code", "magenta");
@@ -399,7 +565,7 @@ class FastTask {
                 
                 let { statusCode, headers } = response;
 
-                //maybe comeback to this
+    // NOTE: Original implementation note — revisit this discount-code error handling.
                 if(statusCode == 422){
                     status(this.id, this.site, "Invalid Discount Code!", "red");
                     resolve("submitDiscount");
@@ -415,6 +581,14 @@ class FastTask {
         });
     };
 
+    /**
+     * Retrieves available shipping rates for the active checkout.
+     *
+     * Selects the first available rate and respects server-provided retry
+     * delays when rate calculation is still in progress.
+     *
+     * @returns {Promise<string>} Resolves with `submitRate`.
+     */
     getRate(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Getting Shipping Rate", "magenta");
@@ -442,6 +616,14 @@ class FastTask {
         });
     };
 
+    /**
+     * Applies the selected shipping rate to checkout.
+     *
+     * Invalid or expired rates return to rate discovery instead of terminating
+     * the task.
+     *
+     * @returns {Promise<string>} Resolves with `calculateTaxes`.
+     */
     submitRate(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Submitting Shipping Rate", "magenta");
@@ -477,6 +659,14 @@ class FastTask {
         });
     };
 
+    /**
+     * Refreshes checkout totals after shipping has been selected.
+     *
+     * Stores the payment amount in the format expected by the frontend payment
+     * request and determines whether a payment gateway must first be discovered.
+     *
+     * @returns {Promise<string>} Resolves with `getPayment` or `submitPayment`.
+     */
     calculateTaxes(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Calculating Taxes", "magenta");
@@ -496,6 +686,14 @@ class FastTask {
         });
     };
 
+    /**
+     * Loads the checkout payment page and discovers the active gateway ID.
+     *
+     * Redirects are inspected for stock, checkpoint, account-login, or other
+     * conditions before the payment page HTML is parsed with Cheerio.
+     *
+     * @returns {Promise<string>} Resolves with `submitPayment`.
+     */
     getPayment(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Getting Payment Page", "magenta");
@@ -506,7 +704,7 @@ class FastTask {
 
                 if(/stock_problems/.test(location))
                     return reject({ message: "Out Of Stock!", delay: this.delays.restock });
-                //todo try to find a solution for this
+    // TODO (original): Investigate a solution for this GraphQL checkout case.
                 else if(/\/checkouts\/co\//)
                     return reject({ message: "Graphql Checkout Not Supported" });
                 else if(/checkpoint/.test(location))
@@ -531,6 +729,14 @@ class FastTask {
         });
     };
 
+    /**
+     * Submits the checkout's payment form using a tokenized card session.
+     *
+     * Handles processing redirects, stock changes, checkout captcha challenges,
+     * gateway refreshes, and PayPal handoff while retaining the same session.
+     *
+     * @returns {Promise<string>} Resolves with the next payment-related state.
+     */
     submitPayment(){
         return new Promise(async (resolve, reject) => {
             this.checkoutEnd = performance.now();
@@ -567,7 +773,7 @@ class FastTask {
             .then(({ body, headers }) => {
                 let { location } = headers;
 
-                //todo: try to submit via /processing (vault), retrieve this via getting checkout "processing_url" or just https://${domain}/${shopId}/checkouts/${checkoutToken}/processing?key=${secretKey}
+    // TODO (original): Explore submitting through `/processing` (vault), using the checkout `processing_url`, or constructing the processing URL from the checkout values.
                 if(/processing/.test(location))
                     return resolve("processPayment");
                 else if(/stock_problems/.test(location))
@@ -615,6 +821,13 @@ class FastTask {
         });
     };
 
+    /**
+     * Solves a checkout reCAPTCHA challenge through the configured 2Captcha key.
+     *
+     * The resulting token is cached and the payment submission is retried.
+     *
+     * @returns {Promise<string>} Resolves with `submitPayment` on success.
+     */
     checkoutCaptcha(){
         return new Promise(async (resolve, reject) => {
             status(this.id, this.site, "Solving Checkout Captcha", "yellow");
@@ -630,12 +843,22 @@ class FastTask {
         });
     };
 
-    //paypal flow - dont't know if it actually works but it gives real declines
+    // PayPal flow
+    /**
+     * Creates a guest PayPal checkout session using the current profile.
+     *
+     * Extracts the temporary PayPal access token and selected funding
+     * instrument required for approval.
+     *
+     * @returns {Promise<string>} Resolves with `approvePaypal`.
+     *
+     * NOTE: Original implementation note — this flow was experimental, but returned real payment declines during testing.
+     */
     createPaypal(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Creating Paypal Session", "yellow");
 
-            //might need to update to add countryCode value (phone)
+    // NOTE: Original implementation note — phone handling may need to be updated to support a dynamic country code.
             let json = {
                 operationName: "OnboardGuestMutation",
                 variables: {
@@ -699,7 +922,7 @@ class FastTask {
                 
                 let { buyer, fundingOptions } = data.onboardAccount;
                 this.paypalAccessToken = buyer.auth.accessToken;
-                //could probably optimze by changing the payload query
+    // NOTE: Original optimization idea — reduce or adjust the GraphQL payload query.
                 this.paypalInstrumentId = fundingOptions[0].allPlans[0].fundingSources[0].fundingInstrument.id;
                 resolve("approvePaypal");
             })
@@ -713,6 +936,11 @@ class FastTask {
         });
     };
 
+    /**
+     * Approves the guest PayPal payment session and captures its return URL.
+     *
+     * @returns {Promise<string>} Resolves with `getCallback`.
+     */
     approvePaypal(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Approving Paypal Session", "yellow") 
@@ -747,6 +975,13 @@ class FastTask {
         });
     };
 
+    /**
+     * Follows the PayPal merchant callback until checkout enters processing.
+     *
+     * Transitional redirect pages are retried without discarding task state.
+     *
+     * @returns {Promise<string>} Resolves with `processPayment` when ready.
+     */
     getCallback(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Getting Callback Page", "yellow");
@@ -774,7 +1009,16 @@ class FastTask {
         });
     };
 
-    //i think i need to change this for free payments
+    /**
+     * Polls the completed checkout and reports the final order result.
+     *
+     * Calculates checkout duration, parses product/order information, and sends
+     * either the success or failure webhook used by the surrounding application.
+     *
+     * @returns {Promise<void>} Completes after reporting the checkout result.
+     *
+     * NOTE: Original implementation note — payment processing may need different handling for free checkouts.
+     */
     processPayment(){
         return new Promise((resolve, reject) => {
             status(this.id, this.site, "Processing Payment", "green");
@@ -784,7 +1028,7 @@ class FastTask {
                 if(headers["retry-after"])
                     return reject({ delay: headers["retry-after"] * 1000 });
 
-                //calculates checkout speed (checkout speed = (atc time - submit payment time) x 1000)
+    // NOTE: Calculates checkout speed from the add-to-cart timestamp through payment submission.
                 let checkoutTime = calculateSpeed(this.checkoutEnd, this.checkoutStart);
                 let product = parseProduct(body);
                 let { order, payments } = body.checkout;
@@ -811,6 +1055,17 @@ class FastTask {
         });
     };
 
+    /**
+     * Executes the task as a retryable asynchronous state machine.
+     *
+     * Each workflow method returns the name of the next method. Recoverable
+     * errors retry the current state after either a step-specific delay or the
+     * task's default retry delay. Errors explicitly containing `stop` terminate
+     * the task.
+     *
+     * @param {string} current - Name of the workflow method to execute.
+     * @returns {Promise<void>}
+     */
     async controller(current){
         try {
             this.next = await this[current]();
