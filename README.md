@@ -1,11 +1,11 @@
 # Shopify Checkout Automation
 
-A legacy Shopify checkout automation proof-of-concept built while I was learning how e-commerce checkout systems worked under the hood.
+A legacy Shopify checkout automation proof-of-concept, built while I was learning how e-commerce checkout systems actually work under the hood.
 
-This repo contains the Shopify module from a larger multi-site automation project I built that also supported Supreme and Foot Locker. It was one of my first big JavaScript projects, and it taught me a lot about REST APIs, HTTP requests, sessions, web scraping, reverse engineering browser flows, proxies, and anti-bot systems.
+This repo is the Shopify module pulled from a larger multi-site automation project I built, which also supported Supreme and Foot Locker. It was one of my first big JavaScript projects, and it taught me a ton about REST APIs, HTTP request flows, sessions, web scraping, reverse-engineering browser behavior, proxies, and anti-bot systems.
 
 > [!NOTE]
-> This project uses legacy Shopify checkout behavior and APIs. Some endpoints and techniques shown here are deprecated or no longer work as they did when the project was originally built.
+> This uses legacy Shopify checkout behavior and endpoints. Some of what's shown here is deprecated or no longer works the way it did when this was originally built.
 
 ## Demo
 
@@ -13,28 +13,28 @@ This repo contains the Shopify module from a larger multi-site automation projec
   <img src="assets/demo.gif" alt="Shopify checkout automation demo" width="800">
 </p>
 
-The demo shows this module integrated into the original checkout bot, automating the Shopify checkout flow and completing purchases within seconds.
+The demo shows this module running inside the original checkout bot, working through a Shopify checkout end to end and completing a purchase within seconds.
 
-## What it does
+## What It Does
 
-The Shopify module handles most of the checkout flow programmatically, from finding a product to submitting payment.
+The Shopify module handles most of the checkout flow programmatically, from finding a product to submitting payment:
 
-- Product monitoring through Shopify product feeds and product endpoints
-- Keyword, product-link, and direct variant monitoring
+- Product monitoring via Shopify product feeds and endpoints
+- Keyword, product-link, and direct-variant monitoring
 - Variant and stock detection
 - Checkout creation and updates
-- Customer and shipping information submission
+- Customer and shipping info submission
 - Shipping-rate retrieval and checkout calculation
 - Discount handling
 - Payment-session creation
 - Checkout queue polling
 - Cookie and session persistence
 - Proxy support
-- CAPTCHA solving through 2Captcha
+- CAPTCHA solving via 2Captcha
 - Experimental PayPal checkout flow
-- Retry and polling logic for asynchronous requests
+- Retry/polling logic for async requests
 
-## How it is structured
+## Structure
 
 ```text
 shopify/
@@ -60,9 +60,9 @@ twocaptcha/
 └── twocaptcha.js
 ```
 
-The main checkout task works like a small asynchronous state machine. Each step returns the next step in the checkout flow, while request helpers keep the Shopify, PayPal, wallet, and CAPTCHA logic separated from the controller.
+The main checkout task is essentially a small async state machine — each step returns the next step in the flow — while the request helpers keep Shopify, PayPal, wallet, and CAPTCHA logic cleanly separated from the controller.
 
-## Checkout flow
+## Checkout Flow
 
 ```mermaid
 flowchart TD
@@ -84,24 +84,24 @@ flowchart TD
     M --> J
 ```
 
-## Reverse engineering
+## Reverse Engineering
 
-A big part of this project was figuring out how the checkout worked beyond the documented API.
+A big chunk of this project was figuring out how checkout worked beyond what's publicly documented — inspecting network traffic, reading storefront JavaScript, comparing requests, following redirects, and reproducing parts of the flow in code. A few alternate request paths only turned up from reading Shopify's frontend checkout scripts directly, not from any docs.
 
-I spent a lot of time inspecting browser network traffic, reading storefront JavaScript, comparing requests, following redirects, testing endpoints, and reproducing parts of the checkout flow with code. Some alternate request paths were discovered by looking through Shopify's frontend checkout scripts rather than through public documentation.
+Honestly, that process was probably the most valuable part of the whole project — learning how to break an unfamiliar system into smaller pieces, test assumptions, and find another way in when the obvious approach didn't pan out.
 
-That process was probably the most valuable part of the project. It taught me how to break an unfamiliar system into smaller pieces, test assumptions, and find another approach when the obvious one did not work.
+## Tech Stack
 
-## What I learned
+`JavaScript` · `Node.js` · `REST APIs` · `GraphQL` · `got` · `tough-cookie` · `Cheerio` · `2Captcha` · `HTTP/HTTPS Proxies` · Shopify's legacy Storefront APIs
 
-This project gave me hands-on experience with:
+## What I Learned
 
 - REST APIs and HTTP request flows
 - Cookies, sessions, headers, and redirects
 - Web scraping and product monitoring
-- Reverse engineering browser behavior
+- Reverse-engineering browser behavior
 - Reading and analyzing frontend JavaScript
-- Undocumented API behavior
+- Working with undocumented API behavior
 - Proxies and request routing
 - Rate limits, polling, and retry logic
 - Async JavaScript workflows
@@ -109,23 +109,15 @@ This project gave me hands-on experience with:
 - CAPTCHA and anti-bot systems
 - Queue handling
 
-Looking back, there are definitely parts I would write differently today, but that is also why I wanted to preserve and document it. It shows a lot of what I was learning at the time and how I approached problems before I had much experience with larger systems.
+Looking back, there's plenty I'd write differently now — but that's part of why I kept this around and documented it. It's a decent snapshot of what I was learning at the time and how I approached unfamiliar systems before I had much experience with anything larger.
 
-## Project status
+## Project Status
 
-**Archived**
-
-This repo is mainly here as a technical archive of the Shopify portion of the original application. It is not maintained as a production-ready checkout tool, and some dependencies, services, and endpoints may no longer function.
-
-The code has been cleaned up and documented to make the original implementation easier to follow.
-
-## Tech
-
-JavaScript, Node.js, REST APIs, GraphQL, `got`, `tough-cookie`, Cheerio, 2Captcha, HTTP/HTTPS proxies, and Shopify's legacy Storefront APIs.
+**Archived.** This repo exists as a technical record of the Shopify portion of the original bot. It's not maintained as a production-ready tool, and some dependencies, services, or endpoints may no longer work. The code has been cleaned up and documented to make the original implementation easier to follow.
 
 ## Disclaimer
 
-This project is shared for educational and archival purposes. It is not intended for production use or for bypassing the rules, protections, or terms of service of any platform.
+Shared for educational and archival purposes only. Not intended for production use or for bypassing the rules, protections, or terms of service of any platform.
 
 ## License
 
